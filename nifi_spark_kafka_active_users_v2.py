@@ -4,12 +4,30 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 
 #Define foreach batch function to aggrate stream data several times and print console
 def foreach_batch_func(df, epoch_id):
-    df = df.sort("click_number")
+    df = df.sort(desc("click_number"))
     df \
         .write.format("console") \
         .save()
     pass
 
+#Define foreach batch function to aggrate stream data several times and sink to csv file
+def foreach_batch_func2(df, epoch_id):
+    df = df.sort("click_number")
+    #Prepare serialized kafka values
+    kafka_df = df.select("*")
+    #Choose columns
+    kafka_df = kafka_df.selectExpr("*")
+
+    kafka_target_df = kafka_df.selectExpr("userid as key",
+                                                     "to_json(struct(*)) as value")
+    kafka_target_df \
+        .write \
+        .format("kafka") \
+        .option("header","true") \
+        .option("kafka.bootstrap.servers", "localhost:9092") \
+        .option("topic", "active2") \
+        .save()
+    pass
 
 if __name__ == "__main__":
     spark = SparkSession \
@@ -53,9 +71,9 @@ if __name__ == "__main__":
 #Groupby product_id and count considering distinct users
 #Rename new column as count
     window_count_df = transformed_df \
-        .withWatermark("timestamp", "1 minute") \
+        .withWatermark("timestamp", "5 minute") \
         .groupBy(col("userid"),
-            window(col("timestamp"),"1 minute")).count()
+            window(col("timestamp"),"5 minute")).count()
 
     output_df = window_count_df.select("window.start", "window.end", "userid", "count") \
         .withColumn("click_number", col("count")) \
@@ -68,7 +86,15 @@ if __name__ == "__main__":
     window_query = output_df.writeStream \
     .foreachBatch(lambda df, epoch_id: foreach_batch_func(df, epoch_id))\
     .outputMode("append") \
-    .trigger(processingTime="1 minutes") \
+    .trigger(processingTime="5 minutes") \
+    .start()
+
+#Write spark stream to console or csv sink
+    window_query_2 = output_df.writeStream \
+    .foreachBatch(lambda df, epoch_id: foreach_batch_func2(df, epoch_id))\
+    .outputMode("append") \
+    .option("format","append") \
+    .trigger(processingTime="5 minutes") \
     .start()
 
     window_query.awaitTermination()

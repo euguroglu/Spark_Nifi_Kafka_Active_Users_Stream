@@ -1,0 +1,5 @@
+mysql> CREATE TABLE report_active (
+    start timestamp,
+    end timestamp,
+    userid varchar(20),
+    click_number int);
